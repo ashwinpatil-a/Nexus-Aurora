@@ -22,12 +22,12 @@ app = FastAPI()
 
 # --- 1. CONFIGURATION ---
 # PASTE YOUR KEY HERE
-os.environ["GOOGLE_API_KEY"] = "AIzaSyD5PaS2hSK1AALvp8A-91pWv_V9vkdhB7c" 
+os.environ["GOOGLE_API_KEY"] = ""
 genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
 
 # 2. MONGODB (Optional - Use your string or leave as is for local testing)
 # If you don't have Mongo yet, the app will still run but won't save history.
-MONGO_URI = "mongodb+srv://admin:avp1810@cluster0.vj68psd.mongodb.net/?appName=Cluster0"
+MONGO_URI = ""
 
 try:
     client = MongoClient(MONGO_URI, tlsCAFile=certifi.where(), serverSelectionTimeoutMS=3000)
