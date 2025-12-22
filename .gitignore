@@ -1,0 +1,22 @@
+# Node
+node_modules/
+**/node_modules/
+
+# Build output
+dist/
+build/
+
+# Env
+.env
+.env.*
+*.env
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# DB
+*.db
+*.sqlite3
