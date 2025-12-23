@@ -32,7 +32,7 @@ except Exception as e:
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-os.environ["GOOGLE_API_KEY"] = "AIzaSyDJJs8xATjLydQsE_tm2jSfKcqlTYYUTPQ" # <--- PASTE GEMINI KEY
+os.environ["GOOGLE_API_KEY"] = # <--- PASTE GEMINI KEY
 genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
 
 # 2. INITIALIZE SWARM
