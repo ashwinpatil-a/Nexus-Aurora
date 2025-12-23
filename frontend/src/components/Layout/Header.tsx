@@ -3,11 +3,6 @@ import { supabase } from '../../lib/supabase';
 import { DomainType, DOMAIN_CONFIGS } from '../../config/domains';
 import * as Icons from 'lucide-react';
 
-interface HeaderProps {
-  user: any;
-  currentDomain: DomainType;
-  onDomainChange: (domain: DomainType) => void;
-}
 
 export function Header({ user, currentDomain, onDomainChange }: HeaderProps) {
   const domainConfig = DOMAIN_CONFIGS[currentDomain];

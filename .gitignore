@@ -10,7 +10,7 @@ build/
 .env
 .env.*
 *.env
-
+backend/serviceAccountKey.json
 # Python
 __pycache__/
 *.pyc
