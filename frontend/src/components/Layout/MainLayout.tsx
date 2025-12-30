@@ -8,9 +8,17 @@ import { signOut } from 'firebase/auth';
 export function MainLayout({ user }: { user: any }) {
   const [isSidebarOpen, setSidebarOpen] = useState(true);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  
+  // 🟢 FIX: Add a key to force-reset the Chat Interface
+  const [resetKey, setResetKey] = useState(0);
+
+  const handleSessionSelect = (id: string | null) => {
+      setCurrentSessionId(id);
+      // If user clicks "New Analysis" (null), increment key to force re-render
+      if (!id) setResetKey(prev => prev + 1); 
+  };
 
   return (
-    // FIX: h-screen forces exact viewport height. overflow-hidden prevents body scroll.
     <div className="flex h-screen w-full bg-[#0B0C15] text-white overflow-hidden font-sans">
       
       {/* 1. SIDEBAR */}
@@ -23,15 +31,15 @@ export function MainLayout({ user }: { user: any }) {
             isOpen={isSidebarOpen} 
             user={user}
             activeSessionId={currentSessionId}
-            onSessionSelect={setCurrentSessionId}
+            onSessionSelect={handleSessionSelect} // 🟢 Use our wrapper function
             onToggle={() => setSidebarOpen(false)}
          />
       </div>
 
-      {/* 2. MAIN CONTENT WRAPPER */}
+      {/* 2. MAIN CONTENT */}
       <div className="flex-1 flex flex-col min-w-0 h-full relative">
         
-        {/* HEADER (Fixed Height) */}
+        {/* HEADER */}
         <div className="h-16 border-b border-white/5 flex items-center justify-between px-6 bg-[#0B0C15]/80 backdrop-blur-md z-30 flex-shrink-0">
           <div className="flex items-center gap-4">
             <button 
@@ -56,9 +64,13 @@ export function MainLayout({ user }: { user: any }) {
           </button>
         </div>
 
-        {/* CHAT AREA (Flex-1 fills remaining height, overflow-hidden keeps scroll internal) */}
+        {/* CHAT AREA */}
         <div className="flex-1 overflow-hidden relative bg-[#0B0C15]">
-          <ChatInterface sessionId={currentSessionId} />
+          {/* 🟢 FIX: The 'key' prop forces React to destroy and recreate this component when resetKey changes */}
+          <ChatInterface 
+            key={`${currentSessionId}-${resetKey}`} 
+            sessionId={currentSessionId} 
+          />
         </div>
       </div>
     </div>

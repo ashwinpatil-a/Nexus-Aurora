@@ -1,15 +1,25 @@
-import google.generativeai as genai
 import os
+from pathlib import Path
+from dotenv import load_dotenv
+from google import genai
 
-# PASTE YOUR KEY HERE
-os.environ["GOOGLE_API_KEY"] = "AIzaSyD5PaS2hSK1AALvp8A-91pWv_V9vkdhB7c"
-genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
+# 1. Load Env
+env_path = Path(__file__).parent / ".env"
+load_dotenv(dotenv_path=env_path, override=True)
+api_key = os.getenv("GOOGLE_API_KEY")
 
-print("🔍 Connecting to Google...")
+if not api_key:
+    print("❌ Error: GOOGLE_API_KEY not found in .env")
+    exit()
+
+# 2. Initialize Client
+client = genai.Client(api_key=api_key)
+
+# 3. List Models
+print("🔍 Checking available models for your API key...\n")
 try:
-    print("✅ AVAILABLE MODELS:")
-    for m in genai.list_models():
-        if 'generateContent' in m.supported_generation_methods:
-            print(f"   👉 {m.name}")
+    # We iterate and print the name directly
+    for m in client.models.list():
+        print(f"✅ Found: {m.name}")
 except Exception as e:
-    print(f"❌ ERROR: {e}")
+    print(f"❌ Error listing models: {e}")

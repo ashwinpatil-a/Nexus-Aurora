@@ -1,7 +1,5 @@
 import { useState, useEffect } from 'react';
 import { Plus, MessageSquare, Trash2, FileText } from 'lucide-react';
-import { db } from '../../firebase'; // Ensure this points to firebase.ts
-import { collection, query, where, orderBy, onSnapshot, addDoc, deleteDoc, doc } from 'firebase/firestore';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -14,32 +12,53 @@ interface SidebarProps {
 export function Sidebar({ isOpen, user, activeSessionId, onSessionSelect }: SidebarProps) {
   const [sessions, setSessions] = useState<any[]>([]);
 
+  // 🟢 FIX: Fetch from Backend API (MongoDB) instead of Firestore
   useEffect(() => {
-    if (!user) return;
+    if (!user?.email) return;
 
-    // Listen to Firestore 'chat_sessions'
-    const q = query(
-      collection(db, "chat_sessions"),
-      where("user_id", "==", user.uid),
-      orderBy("created_at", "desc")
-    );
+    const fetchSessions = async () => {
+      try {
+        console.log("Fetching history for:", user.email); // 👈 Debug Log 1
+        const res = await fetch('http://localhost:8000/sessions', {
+            headers: { 'user-email': user.email }
+        });
+        if (res.ok) {
+            const data = await res.json();
+            console.log("Backend returned:", data); // 👈 Debug Log 2 (Likely empty array [] right now)
+            setSessions(data);
+        }
+      } catch (error) {
+        console.error("Failed to load history:", error);
+      }
+    };
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const loadedSessions = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      setSessions(loadedSessions);
-    });
+    fetchSessions();
+    
+    // Poll every 5 seconds to keep history updated
+    const interval = setInterval(fetchSessions, 5000);
+    return () => clearInterval(interval);
 
-    return () => unsubscribe();
   }, [user]);
+
+  // Inside Sidebar.tsx
 
   const handleDelete = async (e: any, id: string) => {
     e.stopPropagation();
-    if (confirm("Delete this history?")) {
-        await deleteDoc(doc(db, "chat_sessions", id));
-        if (activeSessionId === id) onSessionSelect(null);
+    if (confirm('Delete this history permanently?')) {
+        try {
+            // 1. Tell Backend to delete from MongoDB
+            await fetch(`http://localhost:8000/sessions/${id}`, {
+                method: 'DELETE',
+            });
+            
+            // 2. Remove from UI
+            setSessions(prev => prev.filter(s => s.id !== id));
+            if (activeSessionId === id) onSessionSelect(null);
+            
+        } catch (error) {
+            console.error("Failed to delete session:", error);
+            alert("Failed to delete session");
+        }
     }
   };
 
