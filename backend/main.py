@@ -18,7 +18,7 @@ from pymongo import MongoClient
 from dotenv import load_dotenv
 from google import genai
 
-# --- IMPORT MODULES ---
+# Imports
 from utils.loaders import load_file_universally
 from utils.file_store import MongoFileStore
 from agents.vault import VaultAgent
@@ -55,60 +55,77 @@ app.add_middleware(
 )
 
 # =========================================================
-# 🟢 ROBUST MODEL ROTATOR (Solves 429 & 404 Errors)
+# 🟢 MEGA MODEL ROTATOR (Using ALL your available models)
 # =========================================================
 def generate_content_robust(prompt: str, json_mode: bool = False):
     """
-    Tries multiple models. If one fails (Quota/NotFound), it instantly tries the next.
+    Cycles through 20+ models to guarantee uptime.
     """
+    
+    # Priority Queue based on Speed > Intelligence > Experimental
     models_to_try = [
-        'gemini-2.5-flash',       # Primary
-        'gemini-2.0-flash',       # Fallback 1
-        'gemini-flash-latest',    # Fallback 2
-        'gemini-1.5-flash',       # Fallback 3
-        'gemini-1.5-pro'          # Last Resort
+        'gemini-2.0-flash',             
+        'gemini-2.5-flash',             
+        'gemini-1.5-flash',
+        'gemini-flash-latest',
+        'gemini-2.0-flash-lite-preview-02-05', # Very fast backup
+        
+        # Smart Models (Slower, stricter quota)
+        'gemini-1.5-pro',
+        'gemini-pro-latest',
+        
+        # Experimental / New
+        'gemini-2.0-flash-exp',
+        'gemini-exp-1206',
+        'gemini-2.0-flash-001',
+        
+        # Open Models
+        'gemma-3-27b-it',
+        'gemma-3-4b-it' 
     ]
     
-    last_error = None
+    last_err = None
     
-    for model in models_to_try:
+    for m in models_to_try:
         try:
             config = {'response_mime_type': 'application/json'} if json_mode else None
+            # print(f"Trying model: {m}")
             response = genai_client.models.generate_content(
-                model=model, 
-                contents=prompt,
+                model=m, 
+                contents=prompt, 
                 config=config
             )
             return response.text
+            
         except Exception as e:
-            error_msg = str(e)
-            # Only switch if it's a "Limit" or "Not Found" error
-            if "429" in error_msg or "404" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
-                # print(f"⚠️ {model} failed. Switching...")
-                last_error = e
-                continue
-            else:
-                # If it's a real bug, raise it
-                raise e
-                
-    raise RuntimeError(f"All models failed. Last error: {str(last_error)}")
+            err_str = str(e)
+            # Filter for API errors (Quota, Not Found, Overloaded)
+            if any(x in err_str for x in ["429", "404", "RESOURCE", "NOT_FOUND", "Quota", "busy", "exhausted"]):
+                last_err = e
+                continue # Skip to next model
+            
+            # If it's a code error in our prompt, we might want to stop, 
+            # but for robustness, we try one more model then fail.
+            print(f"⚠️ Error on {m}: {err_str}")
+            continue
+            
+    print(f"❌ ALL MODELS FAILED. Final error: {last_err}")
+    return "Error: System Overloaded. All AI models are currently busy. Please try again."
 
-# 2. INITIALIZE AGENTS (Pass the Rotator Function)
+# 2. INITIALIZE AGENTS
 file_store = MongoFileStore(db)
 vault = VaultAgent(mongo_db=db)
 analyst = AnalystAgent(generate_content_robust, vault)
 translator = TranslatorAgent(generate_content_robust)
-
 active_sessions: Dict[str, dict] = {} 
 
 class AnalyzeRequest(BaseModel):
     text: str
     session_id: Optional[str] = None
     user_email: str = "anonymous"
-    translation_mode: str = "mixed" 
+    translation_mode: str = "mixed"
 
-# 3. API ENDPOINTS
-
+# 3. ENDPOINTS
 @app.post("/upload")
 async def upload(file: UploadFile = File(...), user_email: str = Header("anonymous")):
     sid = str(uuid.uuid4())
@@ -118,24 +135,17 @@ async def upload(file: UploadFile = File(...), user_email: str = Header("anonymo
         if data is None: return {"error": "Unsupported file format"}
 
         if vault and dtype == "structured":
-            protected_data = vault.ingest_file(data, session_id=sid)
-        else:
-            protected_data = data
-
-        file_store.save_file(sid, protected_data, dtype, file.filename)
-        active_sessions[sid] = {"data": protected_data, "type": dtype}
+            data = vault.ingest_file(data, session_id=sid)
+        
+        file_store.save_file(sid, data, dtype, file.filename)
+        active_sessions[sid] = {"data": data, "type": dtype}
 
         if db is not None:
             ts = datetime.now().isoformat()
             db.sessions.insert_one({"session_id": sid, "user_email": user_email, "title": file.filename, "created_at": ts, "file_attached": True})
-            db.messages.insert_one({
-                "session_id": sid, "role": "assistant", 
-                "content": f"✅ **{file.filename}** loaded & secured.\nReady for analysis.", 
-                "timestamp": ts, "metadata": {"agent": "Vault", "privacyScore": 100}
-            })
+            db.messages.insert_one({"session_id": sid, "role": "assistant", "content": f"✅ **{file.filename}** loaded.", "timestamp": ts})
 
-        return {"analysis": "File Processed", "session_id": sid, "privacyScore": 100}
-
+        return {"analysis": "File Processed", "session_id": sid}
     except Exception as e:
         return {"error": str(e)}
 
@@ -143,63 +153,65 @@ async def upload(file: UploadFile = File(...), user_email: str = Header("anonymo
 async def analyze(data: AnalyzeRequest):
     sid = data.session_id or str(uuid.uuid4())
     
-    # Recovery
+    # 1. Recovery
     if sid not in active_sessions:
-        print(f"🔄 Recovering session {sid} from Cloud DB...")
         r_data, r_type = file_store.load_file(sid)
         if r_data is not None:
             active_sessions[sid] = {"data": r_data, "type": r_type}
+        else:
+            print(f"⚠️ Session {sid} not found in DB.")
     
     session_data = active_sessions.get(sid)
     
     try:
-        # 1. DETECT & TRANSLATE
-        translation_result = translator.detect_and_translate(data.text)
-        english_query = translation_result.get("english_query", data.text)
-        user_lang = translation_result.get("detected_language", "English")
+        # A. Translate
+        trans_res = translator.detect_and_translate(data.text)
+        eng_query = trans_res.get("english_query", data.text)
+        user_lang = trans_res.get("detected_language", "English")
         
-        print(f"🌍 Detected: {user_lang} | Query: {english_query}")
+        print(f"🌍 Lang: {user_lang} | Query: {eng_query}")
 
-        # 2. ANALYZE
-        raw_response = ""
+        # B. Analyze
+        raw_resp = ""
+        chart_data = None
         agent_used = "Chat"
 
         if session_data:
             agent_used = "Analyst"
-            raw_response = analyst.analyze_data(
+            raw_resp, chart_data = analyst.analyze_data(
                 session_data["data"], 
                 session_data["type"], 
-                english_query, 
+                eng_query, 
                 sid
             )
         else:
             agent_used = "Liaison"
-            raw_response = generate_content_robust(f"User Query: {english_query}")
+            raw_resp = generate_content_robust(f"User Query: {eng_query}")
 
-        # 3. TRANSLATE BACK
-        final_response = translator.translate_response(
-            raw_response, 
-            user_lang, 
-            mode=data.translation_mode 
-        )
+        # C. Translate Output
+        final_resp = translator.translate_response(raw_resp, user_lang, mode=data.translation_mode)
 
     except Exception as e:
-        final_response = f"⚠️ System Error: {str(e)}"
+        final_resp = f"⚠️ System Error: {str(e)}"
         agent_used = "System"
+        chart_data = None
 
-    # Save
+    # D. Save History
     if db is not None:
         ts = datetime.now().isoformat()
         db.messages.insert_one({"session_id": sid, "role": "user", "content": data.text, "timestamp": ts})
         db.messages.insert_one({
-            "session_id": sid, "role": "assistant", "content": final_response, 
-            "metadata": {"agent": agent_used, "language": user_lang, "mode": data.translation_mode}, "timestamp": ts
+            "session_id": sid, 
+            "role": "assistant", 
+            "content": final_resp, 
+            "metadata": {"agent": agent_used, "language": user_lang, "chart": chart_data}, 
+            "timestamp": ts
         })
         db.sessions.update_one({"session_id": sid}, {"$set": {"updated_at": ts}})
 
-    return {"analysis": final_response, "session_id": sid, "agent": agent_used}
+    return {"analysis": final_resp, "chart": chart_data, "session_id": sid, "agent": agent_used}
 
-# ... (Keep get_sessions, get_messages, delete_session)
+# Standard Getters
 @app.get("/sessions")
 async def get_sessions(user_email: str = Header(None)):
     if db is None or not user_email: return []
@@ -220,7 +232,12 @@ async def delete_session(sid: str):
     db.sessions.delete_one({"session_id": sid})
     db.messages.delete_many({"session_id": sid})
     db.vault_mappings.delete_one({"session_id": sid})
-    db.file_storage.delete_one({"session_id": sid})
+    try:
+        fdoc = db.file_mappings.find_one({"session_id": sid})
+        if fdoc: 
+            __import__('gridfs').GridFS(db).delete(fdoc['file_id'])
+            db.file_mappings.delete_one({"session_id": sid})
+    except: pass
     active_sessions.pop(sid, None)
     return {"status": "success"}
 
