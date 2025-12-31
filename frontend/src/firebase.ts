@@ -1,16 +1,15 @@
-// src/firebase.js
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
-// REPLACE THIS WITH YOUR ACTUAL CONFIG FROM FIREBASE CONSOLE
+// The secure way: Read from environment, don't hardcode.
 const firebaseConfig = {
-  apiKey: "AIzaSyCv3UzYdVc7_s0Yw7RptfMiaBiRF8erfcE",
-  authDomain: "nexgen-ab179.firebaseapp.com",
-  projectId: "nexgen-ab179",
-  storageBucket: "nexgen-ab179.firebasestorage.app",
-  messagingSenderId: "618304851920",
-  appId: "1:618304851920:web:afec20a6b58b4e91a973d5"
+  apiKey: import.meta.env.VITE_API_KEY,
+  authDomain: import.meta.env.VITE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_APP_ID
 };
 
 const app = initializeApp(firebaseConfig);
