@@ -1,4 +1,3 @@
-# backend/agents/translator.py
 import json
 import re
 
@@ -11,12 +10,18 @@ class TranslatorAgent:
         Role: Translator.
         Input: "{user_text}"
         Task: Identify language and translate to English.
-        Output JSON ONLY: {{"detected_language": "Lang", "english_query": "Text"}}
+        
+        CRITICAL: Output strictly valid JSON. No markdown formatting.
+        Format: {{"detected_language": "Lang", "english_query": "Text"}}
         """
         try:
+            # We pass json_mode=True, but main.py will ignore it if the model is Gemma
             response_text = self.call_model(prompt, json_mode=True)
-            if "Error" in response_text: return {"detected_language": "English", "english_query": user_text}
             
+            if "Error" in response_text: 
+                return {"detected_language": "English", "english_query": user_text}
+            
+            # Cleanup for models that might still add markdown
             cleaned = response_text.replace("```json", "").replace("```", "").strip()
             return json.loads(cleaned)
         except:

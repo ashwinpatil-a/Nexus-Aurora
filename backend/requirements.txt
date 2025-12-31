@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+pydantic
+pymongo
+python-dotenv
+google-generativeai
+pandas
+presidio-analyzer
+presidio-anonymizer
+spacy
+pypdf
+python-multipart
+openpyxl
+https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1.tar.gz

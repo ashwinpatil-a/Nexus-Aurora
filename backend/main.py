@@ -1,4 +1,3 @@
-# backend/main.py
 import os
 import uvicorn
 import uuid
@@ -17,6 +16,7 @@ from pydantic import BaseModel
 from pymongo import MongoClient
 from dotenv import load_dotenv
 from google import genai
+from google.api_core.exceptions import ResourceExhausted, ServiceUnavailable, InternalServerError
 
 # Imports
 from utils.loaders import load_file_universally
@@ -61,7 +61,6 @@ def generate_content_robust(prompt: str, json_mode: bool = False):
     """
     Cycles through 20+ models to guarantee uptime.
     """
-    
     # Priority Queue based on Speed > Intelligence > Experimental
     models_to_try = [
         'gemini-2.0-flash',             
@@ -79,7 +78,7 @@ def generate_content_robust(prompt: str, json_mode: bool = False):
         'gemini-exp-1206',
         'gemini-2.0-flash-001',
         
-        # Open Models
+        # Open Models (Note: These DO NOT support JSON mode config)
         'gemma-3-27b-it',
         'gemma-3-4b-it' 
     ]
@@ -88,24 +87,32 @@ def generate_content_robust(prompt: str, json_mode: bool = False):
     
     for m in models_to_try:
         try:
-            config = {'response_mime_type': 'application/json'} if json_mode else None
+            # 🔴 CRITICAL FIX: Gemma models do not support response_mime_type
+            # We must disable JSON mode enforcement for them, even if requested.
+            current_config = None
+            if json_mode and "gemma" not in m:
+                current_config = {'response_mime_type': 'application/json'}
+
             # print(f"Trying model: {m}")
             response = genai_client.models.generate_content(
                 model=m, 
                 contents=prompt, 
-                config=config
+                config=current_config
             )
             return response.text
             
         except Exception as e:
             err_str = str(e)
+            
             # Filter for API errors (Quota, Not Found, Overloaded)
-            if any(x in err_str for x in ["429", "404", "RESOURCE", "NOT_FOUND", "Quota", "busy", "exhausted"]):
+            # 400 is included now to catch the Gemma error if it slips through
+            if any(x in err_str for x in ["429", "404", "RESOURCE", "NOT_FOUND", "Quota", "busy", "exhausted", "400", "INVALID_ARGUMENT"]):
                 last_err = e
+                # 🔴 FIX: If quota is hit, wait a split second before hitting the next model
+                if "429" in err_str or "Quota" in err_str:
+                    time.sleep(1) 
                 continue # Skip to next model
             
-            # If it's a code error in our prompt, we might want to stop, 
-            # but for robustness, we try one more model then fail.
             print(f"⚠️ Error on {m}: {err_str}")
             continue
             
@@ -189,7 +196,12 @@ async def analyze(data: AnalyzeRequest):
             raw_resp = generate_content_robust(f"User Query: {eng_query}")
 
         # C. Translate Output
+        # C. Translate Output
         final_resp = translator.translate_response(raw_resp, user_lang, mode=data.translation_mode)
+
+        # 🟢 FINAL SAFETY CHECK
+        if not final_resp or not final_resp.strip():
+            final_resp = "⚠️ The analysis finished, but returned no readable content. Please try rephrasing your request."
 
     except Exception as e:
         final_resp = f"⚠️ System Error: {str(e)}"
