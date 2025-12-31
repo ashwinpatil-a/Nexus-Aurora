@@ -1,78 +1,66 @@
+# backend/agents/analyst.py
 import pandas as pd
 import sys
 import io
 import re
 import ast
-import traceback
 
 class AnalystAgent:
-    def __init__(self, vault_agent):
+    def __init__(self, model_caller, vault_agent):
+        self.call_model = model_caller # Uses the robust rotator
         self.vault = vault_agent
 
     def _extract_code(self, text: str) -> str:
-        """Extracts ONLY valid Python code blocks."""
         match = re.search(r"```python\s*(.*?)```", text, re.DOTALL)
         if match: return match.group(1).strip()
-        
         match = re.search(r"```\s*(.*?)```", text, re.DOTALL)
         if match: return match.group(1).strip()
-        
         return None
 
-    def analyze_data(self, data_packet, data_type: str, user_query: str, ai_runner, session_id: str):
+    def analyze_data(self, data_packet, data_type: str, english_query: str, session_id: str):
         # 1. Secure Query
-        safe_query, _ = self.vault.protect(user_query, session_id=session_id)
+        safe_query, _ = self.vault.protect(english_query, session_id=session_id)
 
-        # === MODE A: STRUCTURED (CSV, Excel) ===
         if data_type == "structured":
             df = data_packet
-            
-            # Send Schema & Sample so AI knows column names
             buffer = io.StringIO()
             df.info(buf=buffer)
             schema_info = buffer.getvalue()
             head_view = df.head(3).to_string()
 
-            # 🟢 PROMPT: EXECUTION FOCUSED
             prompt = f"""
-            You are a Python Data Analyst.
-            I have a DataFrame `df` loaded in memory.
+            Role: Python Data Analyst.
+            Task: Write Python Pandas code to answer the query.
             
-            METADATA (Column Names & Types):
+            SCHEMA:
             {schema_info}
             
-            SAMPLE DATA (First 3 rows):
+            SAMPLE DATA:
             {head_view}
             
-            USER REQUEST: "{safe_query}"
+            QUERY: "{safe_query}"
             
-            TASK: 
-            1. Identify the relevant columns based on the user request (e.g., if asking for "descriptions", find the column named 'Description', 'Desc', or similar).
-            2. Write Python Pandas code to calculate the answer.
-            3. Store the final result in a variable named `result`.
-            4. If the result is a DataFrame (multiple rows), format `result` as a MARKDOWN TABLE string using `.to_markdown()`.
-            
-            STRICT CONSTRAINTS:
-            - DO NOT explain. DO NOT ask for column names. Figure it out from the Metadata.
-            - DO NOT use print().
-            - RETURN ONLY THE PYTHON CODE inside ```python``` blocks.
+            CRITICAL RULES:
+            1. Assume `df` is loaded.
+            2. Store the final output in variable `result`.
+            3. NO TRUNCATION: If the user asks to "show", "list", or "display" items, DO NOT return a summary like `['A', 'B', ...]`.
+               - Instead, convert it to a full string: `result = '\\n'.join(unique_list)`.
+               - Or use: `pd.set_option('display.max_rows', None); result = df_subset.to_markdown()`.
+            4. If the result is a huge list (over 100 items), format it as a clean list or table, NOT a Python list string.
+            5. RETURN ONLY PYTHON CODE.
             """
             
             try:
-                # 1. Get Code
-                raw_response = ai_runner(prompt)
-                clean_code = self._extract_code(raw_response)
+                # Call robust model
+                response_text = self.call_model(prompt)
+                clean_code = self._extract_code(response_text)
+
+                if not clean_code: return f"No code generated. Output: {response_text}"
                 
-                # Safety Check
-                if not clean_code:
-                    return f"**Analysis Note:** I couldn't generate code. Raw response: {raw_response}", 0
+                try: ast.parse(clean_code)
+                except SyntaxError: return "Error: Invalid Python code generated."
 
-                try:
-                    ast.parse(clean_code) # Syntax Check
-                except SyntaxError:
-                    return f"**Error:** Generated invalid code.", 0
-
-                # 2. Execute Code
+                # Execute
                 local_env = {'df': df, 'pd': pd, 'result': None}
                 old_stdout = sys.stdout
                 redirected_output = io.StringIO()
@@ -80,43 +68,28 @@ class AnalystAgent:
                 
                 try:
                     exec(clean_code, {}, local_env)
-                except Exception as exec_error:
+                except Exception as e:
                     sys.stdout = old_stdout
-                    return f"**Calculation Error:**\n`{str(exec_error)}`", 0
+                    if "tabulate" in str(e):
+                        try:
+                            exec(clean_code.replace(".to_markdown()", ".to_string()"), {}, local_env)
+                        except Exception as fe:
+                            return f"Calculation Error: {fe}"
+                    else:
+                        return f"Calculation Error: {str(e)}"
 
                 sys.stdout = old_stdout
-                execution_result = local_env.get('result')
-                print_output = redirected_output.getvalue()
-
-                # 3. Format Output
-                if execution_result is None and print_output:
-                    execution_result = print_output
+                result = local_env.get('result')
                 
-                # If result is already a markdown string (from .to_markdown()), use it
-                raw_output = str(execution_result)
-                
-                # 4. Final Polish: Show the Result directly
-                human_response = ai_runner(
-                    f"The code calculated this result:\n\n{raw_output}\n\nTask: Present this answer to the user. If it looks like a table, keep the table format. Do not explain the code."
-                )
-                
-                return self.vault.restore(human_response, session_id=session_id), 100
+                # Restore names (Vault)
+                return self.vault.restore(str(result), session_id=session_id)
 
             except Exception as e:
-                return f"System Error: {str(e)}", 0
+                return f"System Error: {str(e)}"
 
-        # === MODE B: UNSTRUCTURED (Text/PDF) ===
         elif data_type == "unstructured":
-            prompt = f"""
-            Analyze this text content and answer the user's question directly.
-            Format the answer as a Markdown Table or Bullet Points if applicable.
-            
-            TEXT CONTENT (First 20k chars):
-            {data_packet[:20000]}
-            
-            USER QUERY: {safe_query}
-            """
-            response = ai_runner(prompt)
-            return self.vault.restore(response, session_id=session_id), 100
+            prompt = f"Analyze this text: {safe_query}\n\nContext:\n{data_packet[:15000]}"
+            response_text = self.call_model(prompt)
+            return self.vault.restore(response_text, session_id=session_id)
 
-        return "Unsupported data format.", 0
+        return "Unsupported data format."
