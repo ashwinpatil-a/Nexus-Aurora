@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Loader2, UploadCloud, Shield, Zap, CheckCircle, Bot } from 'lucide-react';
+import { Send, Loader2, UploadCloud, Shield, Zap, CheckCircle, Bot,BarChart3 } from 'lucide-react';
 import { auth } from '../../firebase';
 import { ChatMessage } from './ChatMessage';
 import { DomainDetectionCard } from './DomainDetectionCard';
+
 
 interface Message {
   id: string;
@@ -13,6 +14,7 @@ interface Message {
     privacyScore?: number;
     agent?: string;
     domain?: string;
+    chart?: any; // 🟢 Added Type Support
   };
 }
 
@@ -26,11 +28,12 @@ export function ChatInterface({ sessionId }: { sessionId: string | null }) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const currentSessionId = sessionId || localSessionId;
 
-  // 🟢 IMPROVED: Scroll when messages change OR when loading starts/stops
+  // Scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
 
+  // Load History
   useEffect(() => {
     if (sessionId) {
         setLocalSessionId(null); 
@@ -63,7 +66,6 @@ export function ChatInterface({ sessionId }: { sessionId: string | null }) {
 
     try {
       const token = await auth.currentUser?.getIdToken();
-      
       const response = await fetch("http://localhost:8000/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
@@ -78,15 +80,20 @@ export function ChatInterface({ sessionId }: { sessionId: string | null }) {
 
       const data = await response.json();
       if (data.domain) setActiveDomain(data.domain);
-      
       if (data.session_id && !currentSessionId) {
           setLocalSessionId(data.session_id);
       }
 
       const aiMsg: Message = {
-        id: (Date.now() + 1).toString(), role: 'assistant', content: data.analysis, timestamp: new Date().toISOString(),
+        id: (Date.now() + 1).toString(), 
+        role: 'assistant', 
+        content: data.analysis, 
+        timestamp: new Date().toISOString(),
         metadata: {
-            privacyScore: data.privacyScore || 100, agent: data.agent || "Swarm", domain: data.domain || "General"
+            privacyScore: data.privacyScore || 100, 
+            agent: data.agent || "Swarm", 
+            domain: data.domain || "General",
+            chart: data.chart // 🟢 CRITICAL FIX: Pass the chart data to the UI
         }
       };
       setMessages(prev => [...prev, aiMsg]);
@@ -118,7 +125,6 @@ export function ChatInterface({ sessionId }: { sessionId: string | null }) {
             headers: { "Authorization": `Bearer ${token}`, "user-email": auth.currentUser?.email || "anonymous" }, 
             body: formData
         });
-        
         const data = await res.json();
         setActiveDomain(data.domain);
 
@@ -143,7 +149,6 @@ export function ChatInterface({ sessionId }: { sessionId: string | null }) {
   return (
     <div className="flex flex-col h-full bg-[#0B0C15] relative font-sans overflow-hidden">
       
-      {/* === STATE 1: WELCOME SCREEN (Empty Chat) === */}
       {!isChatActive && (
         <div className="absolute inset-0 flex flex-col items-center justify-center p-8 z-10 overflow-y-auto">
             <div className="w-20 h-20 bg-gradient-to-br from-cyan-500/10 to-blue-600/10 rounded-[2rem] flex items-center justify-center mb-6 border border-cyan-500/20 shadow-2xl shadow-cyan-900/30">
@@ -165,8 +170,8 @@ export function ChatInterface({ sessionId }: { sessionId: string | null }) {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-4xl px-4">
                 {[
                     { title: "Microsoft Vault", icon: Shield, desc: "PII scrubbed locally", color: "text-green-400" },
-                    { title: "Swarm Agents", icon: Zap, desc: "6 Specialized bots", color: "text-purple-400" },
-                    { title: "Enterprise", icon: CheckCircle, desc: "SOC2 Compliant", color: "text-blue-400" }
+                    { title: "Swarm Agents", icon: Zap, desc: "7 Specialized bots", color: "text-purple-400" },
+                    { title: "Visual Analytics", icon: BarChart3, desc: "Auto-generated charts", color: "text-blue-400" }
                 ].map((item, i) => (
                     <div key={i} className="p-4 rounded-xl bg-[#1A1D26]/40 border border-white/5 backdrop-blur-sm">
                         <div className={`mb-3 ${item.color}`}><item.icon size={24} /></div>
@@ -178,7 +183,6 @@ export function ChatInterface({ sessionId }: { sessionId: string | null }) {
         </div>
       )}
 
-      {/* 🟢 NEW: Full Screen Loading Overlay for INITIAL Interaction (e.g., File Upload) */}
       {loading && messages.length <= 1 && (
          <div className="absolute inset-0 z-50 bg-[#0B0C15]/90 backdrop-blur-sm flex flex-col items-center justify-center animate-in fade-in duration-300">
             <div className="relative">
@@ -206,27 +210,16 @@ export function ChatInterface({ sessionId }: { sessionId: string | null }) {
                     <ChatMessage key={msg.id} message={msg} />
                 ))}
                 
-                {/* 🟢 NEW: High-Visibility Processing Indicator */}
                 {loading && messages.length > 1 && (
                     <div className="flex justify-start max-w-4xl mx-auto animate-in fade-in slide-in-from-bottom-2 duration-300">
-                        {/* Bot Icon */}
                         <div className="w-10 h-10 rounded-xl bg-cyan-900/20 flex items-center justify-center border border-cyan-500/30 mt-1">
                             <Bot size={20} className="text-cyan-400 animate-pulse" />
                         </div>
-                        
-                        {/* Text Box */}
                         <div className="ml-4 p-4 rounded-2xl bg-[#1A1D26] border border-cyan-500/30 shadow-[0_0_15px_rgba(6,182,212,0.1)] flex items-center gap-4">
-                            
-                            {/* Spinner */}
                             <Loader2 size={20} className="animate-spin text-cyan-400" />
-                            
                             <div className="flex flex-col">
-                                <span className="text-cyan-100 font-medium text-sm animate-pulse">
-                                    Nexus Swarm is thinking...
-                                </span>
-                                <span className="text-cyan-500/60 text-xs">
-                                    Analyzing privacy vault & cloud data
-                                </span>
+                                <span className="text-cyan-100 font-medium text-sm animate-pulse">Nexus Swarm is thinking...</span>
+                                <span className="text-cyan-500/60 text-xs">Analyzing privacy vault & cloud data</span>
                             </div>
                         </div>
                     </div>
